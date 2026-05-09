@@ -3,12 +3,12 @@
 #include <ESP32Servo.h>
 #include "HX711.h"
 
-const char *ssid = "NAMA_WIFI";
-const char *password = "PASSWORD_WIFI";
+const char *ssid = "Ripki";
+const char *password = "12341234";
 
-#define MOTOR_IN1 23
-#define MOTOR_IN2 24
-#define MOTOR_EN 25
+#define MOTOR_IN1 12
+#define MOTOR_IN2 13
+#define MOTOR_EN 14
 
 #define SERVO_PIN 17
 
@@ -25,6 +25,7 @@ const int SERVO_DELAY_MS = 500;
 
 float calibration_factor = 1.0;
 
+const int PWM_CHANNEL = 0;
 const int PWM_FREQ = 1000;
 const int PWM_RESOLUTION = 8;
 
@@ -32,10 +33,13 @@ void setupMotor()
 {
   pinMode(MOTOR_IN1, OUTPUT);
   pinMode(MOTOR_IN2, OUTPUT);
-  ledcAttach(MOTOR_EN, PWM_FREQ, PWM_RESOLUTION);
+
+  ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttachPin(MOTOR_EN, PWM_CHANNEL);
+
   digitalWrite(MOTOR_IN1, LOW);
   digitalWrite(MOTOR_IN2, LOW);
-  ledcWrite(MOTOR_EN, 0);
+  ledcWrite(PWM_CHANNEL, 0);
 }
 
 void motorForward(int speedMotor)
@@ -43,14 +47,14 @@ void motorForward(int speedMotor)
   speedMotor = constrain(speedMotor, 0, 255);
   digitalWrite(MOTOR_IN1, HIGH);
   digitalWrite(MOTOR_IN2, LOW);
-  ledcWrite(MOTOR_EN, speedMotor);
+  ledcWrite(PWM_CHANNEL, speedMotor);
 }
 
 void motorStop()
 {
   digitalWrite(MOTOR_IN1, LOW);
   digitalWrite(MOTOR_IN2, LOW);
-  ledcWrite(MOTOR_EN, 0);
+  ledcWrite(PWM_CHANNEL, 0);
 }
 
 void rejectServo()
@@ -123,6 +127,7 @@ void handleTest()
   delay(2000);
   motorStop();
   rejectServo();
+
   float weight = getWeight();
 
   String response = "{";
