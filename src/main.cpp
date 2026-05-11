@@ -6,14 +6,14 @@
 const char *ssid = "Ripki";
 const char *password = "12341234";
 
-#define MOTOR_IN1 12
-#define MOTOR_IN2 13
+#define MOTOR_IN1 26
+#define MOTOR_IN2 27
 #define MOTOR_EN 14
 
 #define SERVO_PIN 17
 
 #define LOADCELL_DT_PIN 5
-#define LOADCELL_SCK_PIN 7
+#define LOADCELL_SCK_PIN 18
 
 WebServer server(80);
 Servo sorterServo;
