@@ -1,178 +1,154 @@
+#include "esp_camera.h"
 #include <WiFi.h>
-#include <WebServer.h>
-#include <ESP32Servo.h>
-#include "HX711.h"
+#include "esp_http_server.h"
 
-const char *ssid = "Ripki";
-const char *password = "12341234";
+const char *ssid = "A73";
+const char *password = "dzyy6328";
 
-#define MOTOR_IN1 26
-#define MOTOR_IN2 27
-#define MOTOR_EN 14
+// ESP32-S3 Camera OV2640
+#define PWDN_GPIO_NUM -1
+#define RESET_GPIO_NUM -1
+#define XCLK_GPIO_NUM 15
+#define SIOD_GPIO_NUM 4
+#define SIOC_GPIO_NUM 5
 
-#define SERVO_PIN 17
+#define Y9_GPIO_NUM 16
+#define Y8_GPIO_NUM 17
+#define Y7_GPIO_NUM 18
+#define Y6_GPIO_NUM 12
+#define Y5_GPIO_NUM 10
+#define Y4_GPIO_NUM 8
+#define Y3_GPIO_NUM 9
+#define Y2_GPIO_NUM 11
 
-#define LOADCELL_DT_PIN 5
-#define LOADCELL_SCK_PIN 18
+#define VSYNC_GPIO_NUM 6
+#define HREF_GPIO_NUM 7
+#define PCLK_GPIO_NUM 13
 
-WebServer server(80);
-Servo sorterServo;
-HX711 scale;
+httpd_handle_t stream_httpd = NULL;
 
-const int SERVO_IDLE = 0;
-const int SERVO_REJECT = 90;
-const int SERVO_DELAY_MS = 500;
-
-float calibration_factor = 1.0;
-
-const int PWM_CHANNEL = 0;
-const int PWM_FREQ = 1000;
-const int PWM_RESOLUTION = 8;
-
-void setupMotor()
+static esp_err_t stream_handler(httpd_req_t *req)
 {
-  pinMode(MOTOR_IN1, OUTPUT);
-  pinMode(MOTOR_IN2, OUTPUT);
+  camera_fb_t *fb = NULL;
 
-  ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RESOLUTION);
-  ledcAttachPin(MOTOR_EN, PWM_CHANNEL);
+  esp_err_t res = httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
+  if (res != ESP_OK)
+    return res;
 
-  digitalWrite(MOTOR_IN1, LOW);
-  digitalWrite(MOTOR_IN2, LOW);
-  ledcWrite(PWM_CHANNEL, 0);
-}
-
-void motorForward(int speedMotor)
-{
-  speedMotor = constrain(speedMotor, 0, 255);
-  digitalWrite(MOTOR_IN1, HIGH);
-  digitalWrite(MOTOR_IN2, LOW);
-  ledcWrite(PWM_CHANNEL, speedMotor);
-}
-
-void motorStop()
-{
-  digitalWrite(MOTOR_IN1, LOW);
-  digitalWrite(MOTOR_IN2, LOW);
-  ledcWrite(PWM_CHANNEL, 0);
-}
-
-void rejectServo()
-{
-  sorterServo.write(SERVO_REJECT);
-  delay(SERVO_DELAY_MS);
-  sorterServo.write(SERVO_IDLE);
-}
-
-float getWeight()
-{
-  if (scale.is_ready())
+  while (true)
   {
-    return scale.get_units(5);
-  }
-  return -1;
-}
+    fb = esp_camera_fb_get();
 
-void handleControl()
-{
-  String startHeader = server.header("X-Start");
-  String predictionHeader = server.header("X-Prediction");
-  String speedHeader = server.header("X-Speed");
-  String durationHeader = server.header("X-Duration");
+    if (!fb)
+    {
+      Serial.println("Camera capture failed");
+      return ESP_FAIL;
+    }
 
-  bool start = startHeader == "1";
-  int prediction = predictionHeader.toInt();
-  int motorSpeed = speedHeader.length() > 0 ? speedHeader.toInt() : 180;
-  int motorDuration = durationHeader.length() > 0 ? durationHeader.toInt() : 2000;
+    httpd_resp_send_chunk(req, "--frame\r\n", strlen("--frame\r\n"));
+    httpd_resp_send_chunk(req, "Content-Type: image/jpeg\r\n\r\n", strlen("Content-Type: image/jpeg\r\n\r\n"));
+    httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len);
+    httpd_resp_send_chunk(req, "\r\n", strlen("\r\n"));
 
-  motorSpeed = constrain(motorSpeed, 0, 255);
-
-  if (!start)
-  {
-    server.send(200, "application/json", "{\"status\":\"idle\"}");
-    return;
+    esp_camera_fb_return(fb);
   }
 
-  motorForward(motorSpeed);
-  delay(motorDuration);
-  motorStop();
+  return ESP_OK;
+}
 
-  float weight = 0;
+void startCameraServer()
+{
+  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+  config.server_port = 80;
 
-  if (prediction == 1)
+  httpd_uri_t stream_uri = {
+      .uri = "/",
+      .method = HTTP_GET,
+      .handler = stream_handler,
+      .user_ctx = NULL};
+
+  if (httpd_start(&stream_httpd, &config) == ESP_OK)
   {
-    rejectServo();
-    weight = 0;
+    httpd_register_uri_handler(stream_httpd, &stream_uri);
+    Serial.println("Camera server started");
   }
   else
   {
-    delay(500);
-    weight = getWeight();
+    Serial.println("Camera server failed");
   }
-
-  String response = "{";
-  response += "\"status\":\"ok\",";
-  response += "\"prediction\":" + String(prediction) + ",";
-  response += "\"motor_speed\":" + String(motorSpeed) + ",";
-  response += "\"motor_duration\":" + String(motorDuration) + ",";
-  response += "\"weight\":" + String(weight);
-  response += "}";
-
-  server.send(200, "application/json", response);
-}
-
-void handleTest()
-{
-  motorForward(180);
-  delay(2000);
-  motorStop();
-  rejectServo();
-
-  float weight = getWeight();
-
-  String response = "{";
-  response += "\"status\":\"test_done\",";
-  response += "\"weight\":" + String(weight);
-  response += "}";
-
-  server.send(200, "application/json", response);
 }
 
 void setup()
 {
+  delay(3000);
   Serial.begin(115200);
+  delay(1000);
 
-  setupMotor();
+  Serial.println();
+  Serial.println("Starting ESP32-S3 Camera...");
 
-  sorterServo.attach(SERVO_PIN);
-  sorterServo.write(SERVO_IDLE);
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
 
-  scale.begin(LOADCELL_DT_PIN, LOADCELL_SCK_PIN);
-  scale.set_scale(calibration_factor);
-  scale.tare();
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+
+  config.pin_sccb_sda = SIOD_GPIO_NUM;
+  config.pin_sccb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+
+  config.frame_size = FRAMESIZE_QVGA;
+  config.jpeg_quality = 12;
+  config.fb_count = 1;
+  config.fb_location = CAMERA_FB_IN_DRAM;
+  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+
+  esp_err_t err = esp_camera_init(&config);
+
+  if (err != ESP_OK)
+  {
+    Serial.printf("Camera init failed: 0x%x\n", err);
+    Serial.println("Cek kabel fleksibel kamera / pin kamera.");
+    return;
+  }
+
+  Serial.println("Camera OK");
 
   WiFi.begin(ssid, password);
+  Serial.print("Connecting WiFi");
 
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(500);
+    Serial.print(".");
   }
 
+  Serial.println();
+  Serial.println("WiFi connected");
+
+  Serial.print("Open browser: http://");
   Serial.println(WiFi.localIP());
 
-  const char *headers[] = {
-      "X-Start",
-      "X-Prediction",
-      "X-Speed",
-      "X-Duration"};
-
-  server.collectHeaders(headers, 4);
-  server.on("/control", HTTP_POST, handleControl);
-  server.on("/test", HTTP_GET, handleTest);
-  server.begin();
+  startCameraServer();
 }
 
 void loop()
 {
-  server.handleClient();
+  delay(1000);
 }
